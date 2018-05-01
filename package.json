@@ -1,0 +1,26 @@
+{
+  "name": "ridi-drm-remover",
+  "version": "0.0.1",
+  "description": "ridibooks drm remover",
+  "main": "index.js",
+  "dependencies": {
+    "bplist-parser": "^0.1.1",
+    "mkdirp": "^0.5.1",
+    "unzip": "^0.1.11",
+    "username": "^3.0.0"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/disjukr/ridi-drm-remover.git"
+  },
+  "author": "JongChan Choi <jong@chan.moe>",
+  "license": "UNLICENSED",
+  "bugs": {
+    "url": "https://github.com/disjukr/ridi-drm-remover/issues"
+  },
+  "homepage": "https://github.com/disjukr/ridi-drm-remover#readme"
+}
