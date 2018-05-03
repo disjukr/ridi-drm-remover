@@ -4,40 +4,150 @@ const path = require('path');
 const { promisify } = require('util');
 
 const bplist = require('bplist-parser');
+const gui = require('gui');
 const mkdirp = require('mkdirp');
 const unzip = require('unzip');
 const username = require('username');
 
-async function main() {
-    const systemUsername = await username();
-    const deviceId = await getDeviceId(systemUsername);
-    for (let ridiUsername of await getRidiUserNames()) {
-        const savePath = `save-here/${ ridiUsername }`;
-        await asyncMkdirp(savePath);
-        const libraryPath = await getLibraryPath(ridiUsername);
-        for (let bookId of await getChildFoldersShallow(libraryPath)) {
-            let type, fd;
-            try {
-                [type, fd] = await openEbook(libraryPath, bookId);
-            } catch (e) {
-                console.log(bookId, 'unsupported or not downloaded yet');
-                continue;
-            }
-            console.log(bookId, type);
-            if (type === 'zip') {
-                await saveZipTypeEbook(deviceId, fd, path.join(savePath, bookId));
-            } else {
-                const contentKey = await decryptKeyFile(deviceId, libraryPath, bookId);
-                switch (type) {
-                case 'pdf': await savePdfTypeEbook(contentKey, fd, path.join(savePath, `${ bookId }.pdf`)); break;
-                case 'epub': await saveEpubTypeEbook(contentKey, fd, path.join(savePath, `${ bookId }.epub`)); break;
-                }
-            }
-        }
+async function entrypoint() {
+    const win = gui.Window.create({});
+    {
+        win.setContentSize({ width: 400, height: 100 });
+        win.onClose = () => gui.MessageLoop.quit();
+        win.setTitle('ridi-drm-remover');
+        win.center();
+        win.activate();
     }
+    let dispose;
+    const context = {
+        savePath: path.join(process.cwd(), 'drm-removed'),
+        goto(name) {
+            if (!screens[name]) throw new Error(`screen not found: '${ name }'`);
+            const screen = screens[name]({ win, context });
+            dispose && dispose();
+            win.setContentView(screen.view);
+            dispose = screen.job && screen.job();
+        },
+    };
+    context.goto('main');
 }
 
-main();
+const screens = {
+    main({ win, context }) {
+        const view = gui.Vibrant.create();
+        {
+            view.setBlendingMode('behind-window');
+            view.setMaterial('dark');
+            view.setStyle({
+                flexDirection: 'column',
+                justifyContent: 'center',
+            });
+        }
+        const openFileDialogButton = gui.Button.create('drm 제거된 파일들을 저장할 경로 변경');
+        {
+            openFileDialogButton.onClick = () => {
+                const dialog = gui.FileOpenDialog.create();
+                dialog.setOptions(gui.FileDialog.optionPickFolders | gui.FileDialog.optionShowHidden);
+                if (dialog.runForWindow(win)) {
+                    context.savePath = dialog.getResult();
+                    savePathLabel.setText(context.savePath);
+                }
+            };
+            view.addChildView(openFileDialogButton);
+        }
+        const noteLabel = gui.Label.create('다음의 경로에 저장됩니다:');
+        {
+            noteLabel.setAlign('center');
+            noteLabel.setColor('#fff');
+            view.addChildView(noteLabel);
+        }
+        const savePathLabel = gui.Label.create(context.savePath);
+        {
+            savePathLabel.setAlign('center');
+            savePathLabel.setColor('#fff');
+            view.addChildView(savePathLabel);
+        }
+        const runButton = gui.Button.create('drm 제거 시작');
+        {
+            runButton.onClick = () => context.goto('run');
+            view.addChildView(runButton);
+        }
+        return { view };
+    },
+    run({ win, context }) {
+        const view = gui.Vibrant.create();
+        {
+            view.setBlendingMode('behind-window');
+            view.setMaterial('dark');
+            view.setStyle({
+                flexDirection: 'column',
+                justifyContent: 'center',
+            });
+        }
+        const noteLabel = gui.Label.create('작업 준비중');
+        {
+            noteLabel.setAlign('center');
+            noteLabel.setColor('#fff');
+            view.addChildView(noteLabel);
+        }
+        const progressBar = gui.ProgressBar.create();
+        {
+            progressBar.setIndeterminate(true);
+            view.addChildView(progressBar);
+        }
+        return {
+            view,
+            async job() {
+                const systemUsername = await username();
+                const deviceId = await getDeviceId(systemUsername);
+                const jobs = await prepareJobs(systemUsername);
+                progressBar.setIndeterminate(false);
+                progressBar.setValue(0);
+                for (let i = 0; i < jobs.length; ++i) {
+                    const [ridiUsername, bookId] = jobs[i];
+                    const libraryPath = getLibraryPath(systemUsername, ridiUsername);
+                    const savePath = path.join(context.savePath, ridiUsername);
+                    progressBar.setValue((i / jobs.length) * 100);
+                    noteLabel.setText(`${ ridiUsername }, ${ bookId } 작업중...`);
+                    let type, fd;
+                    try {
+                        [type, fd] = await openEbook(libraryPath, bookId);
+                        await asyncMkdirp(savePath);
+                    } catch (e) {
+                        console.error(e);
+                        continue;
+                    }
+                    console.log(bookId, type);
+                    if (type === 'zip') {
+                        await saveZipTypeEbook(deviceId, fd, path.join(savePath, bookId));
+                    } else {
+                        const contentKey = await decryptKeyFile(deviceId, libraryPath, bookId);
+                        switch (type) {
+                        case 'pdf': await savePdfTypeEbook(contentKey, fd, path.join(savePath, `${ bookId }.pdf`)); break;
+                        case 'epub': await saveEpubTypeEbook(contentKey, fd, path.join(savePath, `${ bookId }.epub`)); break;
+                        }
+                    }
+                }
+                progressBar.setValue(100);
+                noteLabel.setText('완료');
+            }
+        };
+    },
+};
+
+/**
+ * @returns {[string, string][]}
+ */
+async function prepareJobs(systemUsername) {
+    const jobs = [];
+    for (let ridiUsername of await getRidiUserNames(systemUsername)) {
+        const libraryPath = getLibraryPath(systemUsername, ridiUsername);
+        for (let bookId of await getChildFoldersShallow(libraryPath)) {
+            jobs.push([ridiUsername, bookId]);
+        }
+    }
+    return jobs;
+}
 
 async function savePdfTypeEbook(contentKey, fd, savePath) {
     const decipher = crypto.createDecipheriv(
@@ -114,15 +224,13 @@ async function openEbook(libraryPath, bookId) {
     throw new Error('unsupported ebook type');
 }
 
-async function getRidiUserNames() {
-    const systemUsername = await username();
+async function getRidiUserNames(systemUsername) {
     return (await getChildFoldersShallow(`/Users/${ systemUsername }/Library/Application Support/RIDI/Ridibooks/`)).filter(
         folder => (folder !== 'QtWebEngine') && (folder !== 'fontcache')
     );
 }
 
-async function getLibraryPath(ridiUsername) {
-    const systemUsername = await username();
+function getLibraryPath(systemUsername, ridiUsername) {
     return `/Users/${ systemUsername }/Library/Application Support/RIDI/Ridibooks/${ ridiUsername }/library`;
 }
 
@@ -155,7 +263,10 @@ function parseBplist(filePath) {
     });
 }
 
+const memo = [];
 function asyncMkdirp(dir) {
+    if (memo.includes(dir)) return;
+    memo.push(dir);
     return new Promise((resolve, reject) => mkdirp(
         dir,
         (err, made) => err ? reject(err) : resolve(made),
@@ -199,4 +310,10 @@ class SimpleCrypt {
         }
         return pt.slice(1).toString('binary').slice(2);
     }
+}
+
+entrypoint();
+if (!process.versions.yode) {
+    gui.MessageLoop.run();
+    process.exit(0);
 }

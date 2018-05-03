@@ -3,15 +3,22 @@
   "version": "0.0.1",
   "description": "ridibooks drm remover",
   "main": "index.js",
+  "engines": {
+    "node": "^8"
+  },
   "dependencies": {
     "bplist-parser": "^0.1.1",
+    "gui": "^0.4.3",
     "mkdirp": "^0.5.1",
     "unzip": "^0.1.11",
     "username": "^3.0.0"
   },
-  "devDependencies": {},
+  "devDependencies": {
+    "yackage": "^0.2.5"
+  },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "yackage dist dist",
+    "start": "yackage start"
   },
   "repository": {
     "type": "git",
